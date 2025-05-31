@@ -8,6 +8,10 @@ use log::debug;
 use pyo3::{pyclass, pymethods, PyResult};
 use sequila_core::session_context::SequilaConfig;
 
+use crate::udafs::create_quality_score_histogram_udf;
+use datafusion::execution::registry::FunctionRegistry;
+
+
 #[pyclass(name = "BioSessionContext")]
 // #[derive(Clone)]
 pub struct PyBioSessionContext {
@@ -24,6 +28,9 @@ impl PyBioSessionContext {
     #[new]
     pub fn new(seed: String, catalog_dir: String) -> PyResult<Self> {
         let ctx = create_context().unwrap();
+        ctx.session
+            .register_udf(crate::udafs::create_quality_score_histogram_udf());
+
         let session_config: HashMap<String, String> = HashMap::new();
 
         Ok(PyBioSessionContext {
