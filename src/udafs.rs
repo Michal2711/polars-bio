@@ -3,54 +3,97 @@ use std::sync::Arc;
 
 use arrow::datatypes::DataType;
 use arrow_array::{Array, ArrayRef, StringArray};
-use datafusion_python::datafusion_common::{DataFusionError, Result, ScalarValue};
-use datafusion_python::datafusion_expr::{create_udf, ColumnarValue, ScalarUDF, Volatility};
 
+use datafusion_python::datafusion_common::{DataFusionError, Result, ScalarValue};
+use datafusion_python::datafusion_expr::{
+    create_udaf, Accumulator, AccumulatorFactoryFunction, AggregateUDF, Volatility,
+};
 use serde_json;
 
-pub fn create_quality_score_histogram_udf() -> ScalarUDF {
-    let func = |args: &[ColumnarValue]| -> Result<ColumnarValue> {
-        let string_array = match &args[0] {
-            ColumnarValue::Array(array) => array
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| DataFusionError::Execution("Expected StringArray".to_string()))?,
-            ColumnarValue::Scalar(_) => {
-                return Err(DataFusionError::Execution(
-                    "Expected array input, got scalar".to_string(),
-                ))
-            }
-        };
+#[derive(Debug, Default)]
+struct MeanQHistogram {
+    hist: HashMap<u64, u64>,
+}
 
-        let mut results = Vec::with_capacity(string_array.len());
+impl MeanQHistogram {
+    fn add_read(&mut self, qual_str: &str) {
+        let mut sum = 0u64;
+        let mut len = 0u64;
+        for b in qual_str.bytes() {
+            sum += (b.saturating_sub(33)) as u64;
+            len += 1;
+        }
+        if len > 0 {
+            let mean = sum / len;
+            *self.hist.entry(mean).or_default() += 1;
+        }
+    }
+}
 
-        for i in 0..string_array.len() {
-            if string_array.is_null(i) {
-                results.push(ScalarValue::Utf8(None));
-            } else {
-                let s = string_array.value(i);
-                let mut histogram = HashMap::<u64, u64>::new();
+impl Accumulator for MeanQHistogram {
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        let json = serde_json::to_string(&self.hist)
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        Ok(vec![ScalarValue::Utf8(Some(json))])
+    }
 
-                for ch in s.chars() {
-                    let q = (ch as u8).saturating_sub(33) as u64;
-                    *histogram.entry(q).or_insert(0) += 1;
-                }
-
-                let json = serde_json::to_string(&histogram)
-                    .map_err(|e| DataFusionError::Execution(e.to_string()))?;
-                results.push(ScalarValue::Utf8(Some(json)));
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        let arr = values[0]
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| DataFusionError::Internal("Expected StringArray".into()))?;
+        for i in 0..arr.len() {
+            if !arr.is_null(i) {
+                self.add_read(arr.value(i));
             }
         }
+        Ok(())
+    }
 
-        let array = ScalarValue::iter_to_array(results.into_iter())?;
-        Ok(ColumnarValue::Array(array))
-    };
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
+        let arr = states[0]
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| DataFusionError::Internal("Expected StringArray".into()))?;
+        for i in 0..arr.len() {
+            if arr.is_null(i) {
+                continue;
+            }
+            let sub: HashMap<String, u64> =
+                serde_json::from_str(arr.value(i)).map_err(|e| DataFusionError::Execution(e.to_string()))?;
+            for (k, v) in sub {
+                let key = k.parse::<u64>().map_err(|e| DataFusionError::Execution(e.to_string()))?;
+                *self.hist.entry(key).or_default() += v;
+            }
+        }
+        Ok(())
+    }
 
-    create_udf(
-        "quality_score_histogram",
-        vec![DataType::Utf8],
-        DataType::Utf8,
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        let json = serde_json::to_string(&self.hist)
+            .map_err(|e| DataFusionError::Execution(e.to_string()))?;
+        Ok(ScalarValue::Utf8(Some(json)))
+    }
+
+    fn size(&self) -> usize {
+        std::mem::size_of::<Self>() + self.hist.len() * std::mem::size_of::<(u64, u64)>()
+    }
+}
+
+pub fn create_sequence_quality_score_udaf() -> AggregateUDF {
+    let input_types = vec![DataType::Utf8];
+    let return_type = Arc::new(DataType::Utf8);
+    let state_types = Arc::new(vec![DataType::Utf8]);
+
+    let factory: AccumulatorFactoryFunction =
+        Arc::new(|_| Ok(Box::<MeanQHistogram>::default()));
+
+    create_udaf(
+        "sequence_quality_score",
+        input_types,
+        return_type,
         Volatility::Immutable,
-        Arc::new(func),
+        factory,
+        state_types,
     )
 }

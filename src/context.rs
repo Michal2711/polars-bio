@@ -8,7 +8,8 @@ use log::debug;
 use pyo3::{pyclass, pymethods, PyResult};
 use sequila_core::session_context::SequilaConfig;
 
-use crate::udafs::create_quality_score_histogram_udf;
+use crate::udafs::create_sequence_quality_score_udaf;
+
 use datafusion::execution::registry::FunctionRegistry;
 
 
@@ -29,7 +30,7 @@ impl PyBioSessionContext {
     pub fn new(seed: String, catalog_dir: String) -> PyResult<Self> {
         let ctx = create_context().unwrap();
         ctx.session
-            .register_udf(crate::udafs::create_quality_score_histogram_udf());
+            .register_udaf(create_sequence_quality_score_udaf());
 
         let session_config: HashMap<String, String> = HashMap::new();
 
