@@ -47,11 +47,11 @@ __all__ = [
     "set_option",
 ]
 
-try:
-    from . import _rust
-    ctx.session.register_udaf(_rust.create_sequence_quality_score_udaf())
-except Exception as _e:
-    import warnings
-    warnings.warn(
-        f"polars_bio: nie udało się zarejestrować QC-UDF – {_e!s}"
-    )
+# try:
+#     from polars_bio import _rust
+#     ctx.session.register_udaf(_rust.create_sequence_quality_score_udaf())
+# except Exception as _e:
+#     import warnings
+#     warnings.warn(
+#         f"polars_bio: nie udało się zarejestrować QC-UDF – {_e!s}"
+#     )

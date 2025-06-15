@@ -10,7 +10,7 @@ use sequila_core::session_context::SequilaConfig;
 
 use crate::udafs::create_sequence_quality_score_udaf;
 
-use datafusion::execution::registry::FunctionRegistry;
+// use datafusion::execution::registry::FunctionRegistry;
 
 
 #[pyclass(name = "BioSessionContext")]
